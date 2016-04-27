@@ -118,13 +118,13 @@ rszprtn()
 	DEVTYPE=`readlink $ROOTPARTN | rev | cut -d'/' -f2 | rev`
 	if [ "${DEVTYPE##ROOTPRTNDEV}" != "$DEVTYPE" ]
 	then
+		# we need to verify assumed partition layout first. we'll proceed if
+		# +rootfs is on partition 2. moving the rootfs partition/partition-start
+		# +(in case if it's on 3) has it's own issues (ext4: journal etc.).
+		# +'boot' is always on 1.(?)
 		ROOTPRTNNO=`echo ${DEVTYPE##ROOTPRTNDEV} | cut -dp | -f2 | cut -d0 -f1`
 		if [ $ROOTPRTNNO -eq "2" ]
 		then
-			# we need to verify assumed partition layout first. we'll proceed if
-			# +rootfs is on partition 2. moving the rootfs partition/partition-start
-			# +(in case if it's on 3) has it's own issues (ext4: journal etc.).
-			# +'boot' is always on 1.(?)
 			# 1. get last partition no. (no. of total partitions)
 			PRTNNO=`parted -s $BLOCKDEV unit s print -m | tail -n 1 | cut -d: -f1`
 			if [ $PRTNNO -eq "2" ] || [ $PRTNNO -eq "3" ]
@@ -133,36 +133,40 @@ rszprtn()
 				FLAG=`parted -s $BLOCKDEV unit s print -m | head -n 3 | tail -n 1 | cut -d: -f7 | cut -d';' -f1`
 				if [  "$FLAG" == "boot"]
 				then
-					ENDSEC=`parted /dev/sda unit s print -m | head -n 2 | tail -n 1 | cut -d: -f2 | cut -ds -f1`
-					ENDSEC=`expr $ENDSEC - 1`
 					case $PRTNNO
 					in
 						2)
-							:
+							# rootfs is on partition 2 & it's last partition
+							# 'get start-sector'(rootfs)->'get end-sector'(sd/msd-card)
+							STRTSEC=`parted -s $BLOCKDEV unit s print -m | head -n 4 | tail -n 1 | cut -d: -f2 | cut -ds -f1`
+							ENDSEC=`parted -s $BLOCKDEV unit s print -m | head -n 2 | tail -n 1 | cut -d: -f2 | cut -ds -f1`
+							ENDSEC=`expr $ENDSEC - 1`
 							;;
 						3)
+							# partition 3, we'll proceed only if it's linux-swap; other partition type may mean custom partition layout
 							FSTYPE=`parted -s $BLOCKDEV unit s print -m | head -n 5 | tail -n 1 | cut -d: -f5 | cut -d'(' -f1`
 							if [ "$FSTYPE" == "linux-swap"]
 							then
-								# 'get start-sector(rootfs)->delete(swap, rootfs)->create(new rootfs)
+								# 'get start-sector'(rootfs)->'get end-sector'(sd/msd-card)->delete(swap)
+								STRTSEC=`parted -s $BLOCKDEV unit s print -m | head -n 4 | tail -n 1 | cut -d: -f2 | cut -ds -f1`
+								ENDSEC=`parted -s $BLOCKDEV unit s print -m | head -n 2 | tail -n 1 | cut -d: -f2 | cut -ds -f1`
+								ENDSEC=`expr $ENDSEC - 1`
+								parted -s $BLOCKDEV rm $PRTNNO
+								PRTNNO=`expr $PRTNNO - 1`
+							else
+								exitsetup
+							fi
 							;;
 						*)
-							:
+							exitsetup
 							;;
 					esac
-					# 3. check whether last partition is 'swap' or not
-					
-					
-						# 'get start-sector(rootfs)->delete(swap, rootfs)->create(new rootfs)
-						STRTSEC=`parted -s $BLOCKDEV unit s print -m | head -n 4 | tail -n 1 | cut -d: -f2 | cut -ds -f1`
-						ENDSEC=`parted -s $BLOCKDEV unit s print -m | head -n 2 | tail -n 1 | cut -d: -f2 | cut -ds -f1`
-						ENDSEC=`expr $ENDSEC - 1`
-						if [ $ENDSEC -gt $STRTSEC ]
-						then
-							:
-						else
-							exitsetup
-						fi
+					if [ $ENDSEC -gt $STRTSEC ]
+					then
+						# remove partition 2; rootfs
+						parted -s $BLOCKDEV rm $PRTNNO
+						# create new partition 2; rootfs with same star sec. but new end sec.
+						parted -s $BLOCKDEV unit s primary ext4 $STRTSEC $ENDSEC
 					else
 						exitsetup
 					fi
@@ -172,6 +176,12 @@ rszprtn()
 			else
 				exitsetup
 			fi
+		else
+			exitsetup
+		fi
+	else
+		exitsetup
+	fi
 	# schedule a run for 'resize2fs' & 'fsck' on next boot through init script(s).
 	:
 }
