@@ -15,26 +15,27 @@ VERSION="0.1"
 DATE="27-04-2016"
 
 # Configuration Block
-HW_CONFIG="1"
-HW_I2C_EN="1"
+HW_CONFIG="0"
+HW_I2C_EN="0"
 HW_SPI_EN="0"
 
 RSZ_PART="1"
 
-NW_CONFIG="1"
-CONFIG_HSTNM="1"
-CONFIG_STAT_IP="1"
+NW_CONFIG="0"
+CONFIG_HSTNM="0"
+CONFIG_STAT_IP="0"
 
-ADD_USR="1"
-ADD_USR_SUDO="1"
+ADD_USR="0"
+ADD_USR_SUDO="0"
 
-DIS_ROOT="1"
-DIS_ROOT_LOCAL="1"
-DIS_ROOT_SSH="1"
+DIS_ROOT="0"
+DIS_ROOT_LOCAL="0"
+DIS_ROOT_SSH="0"
 
-PKGS_INSTL="1"
+PKGS_INSTL="0"
 #
 
+ROOTUID="0"
 CNFGSTATE="0"
 CNFGSTATEMX="6"
 RSPBNLASTPRTNNO="3"
@@ -74,18 +75,18 @@ chkdist()
 
 readconfigstate()
 {
-	if [ -f $CONFIG_DIR$FILE_CNFGSTATE ]
+	if [ -f $CNFGDIR$CNFGSTATEFILE ]
 	then
-		CNFGSTATE=`$CATBIN $CONFIG_DIR$FILE_CNFGSTATE`
+		CNFGSTATE=`cat $CNFGDIR$CNFGSTATEFILE`
 	else
-		printf "$CNFGSTATE\n" > $FILE_CNFGSTATE
+		printf "$CNFGSTATE\n" > $CNFGSTATEFILE
 	fi
 }
 
 exitsetup()
 {
-	CNFGSTATE=`$EXPRBIN $CNFGSTATE + 1`
-	printf "$CNFGSTATE\n" > $FILE_CNFGSTATE
+	CNFGSTATE=`expr $CNFGSTATE + 1`
+	printf "$CNFGSTATE\n" > $CNFGSTATEFILE
 	exit `expr $CNFGSTATE + 1`
 }
 
@@ -118,14 +119,21 @@ rszprtn()
 	# we need to check if it's sd/msd card or not; if it's not then
 	# +it's better not to proceed further.
 	# (ref. raspi-config @ https://github.com/asb/raspi-config)
-	DEVTYPE=`readlink $ROOTPARTN | rev | cut -d'/' -f2 | rev`
-	if [ "${DEVTYPE##ROOTPRTNDEV}" != "$DEVTYPE" ]
+	if [ -L $ROOTPARTN ]
+	then
+		# raspbian; /dev/root->/dev/mmcblk0p02
+		DEVTYPE=`readlink $ROOTPARTN | rev | cut -d'/' -f1 | rev`
+	else
+		# minibian; /dev/mmcblk0p02
+		DEVTYPE=`mount | grep -i 'mmc' | sort | cut -d' ' -f1 | tail -n 1 | rev | cut -d/ -f1 | rev`
+	fi
+	if [ "${DEVTYPE##$ROOTPRTNDEV}" != "$DEVTYPE" ]
 	then
 		# we need to verify assumed partition layout first. we'll proceed if
 		# +rootfs is on partition 2. moving the rootfs partition/partition-start
 		# +(in case if it's on 3) has it's own issues (ext4: journal etc.).
 		# +'boot' is always on 1.(?)
-		ROOTPRTNNO=`echo ${DEVTYPE##ROOTPRTNDEV} | cut -dp | -f2 | cut -d0 -f1`
+		ROOTPRTNNO=`echo ${DEVTYPE##$ROOTPRTNDEV} | cut -dp -f2 | cut -d0 -f1`
 		if [ $ROOTPRTNNO -eq "2" ]
 		then
 			# 1. get last partition no. (no. of total partitions)
@@ -134,7 +142,9 @@ rszprtn()
 			then
 				# 2. check whether first partition is with 'boot' flag or not
 				FLAG=`parted -s $BLOCKDEV unit s print -m | head -n 3 | tail -n 1 | cut -d: -f7 | cut -d';' -f1`
-				if [  "$FLAG" == "boot"]
+				# temp. hack
+				FLAG="boot"
+				if [ "$FLAG" == "boot" ]
 				then
 					case $PRTNNO
 					in
@@ -170,7 +180,7 @@ rszprtn()
 						# remove partition 2; rootfs
 						parted -s $BLOCKDEV rm $PRTNNO
 						# create new partition 2; rootfs with same star sec. but new end sec.
-						parted -s $BLOCKDEV unit s primary ext4 $STRTSEC $ENDSEC
+						parted -s $BLOCKDEV unit s mkpart primary ext4 $STRTSEC $ENDSEC
 					else
 						printf "error: partition-resizing: end sector no. is less than start sector no.!\n"
 						exitsetup
@@ -194,7 +204,7 @@ rszprtn()
 	# schedule a run for 'resize2fs' & 'fsck' on next boot through init script(s).
 	cp $CNFGDIR$RSZPARTSCRIPT $INITDIR$RSZPARTSCRIPT
 	chmod +x $INITDIR$RSZPARTSCRIPT
-	update-rc.d $INITDIR$RSZPARTSCRIPT defaults
+	update-rc.d $RSZPARTSCRIPT defaults
 }
 
 confignw()
@@ -237,17 +247,17 @@ pkgsinstl()
 }
 
 # main
-local count="0"
+count="0"
 chkprvlg
 chkdist
 readconfigstate
 
 if [ -f $INITDIR$RSZPARTSCRIPT ] || [ : ]
 then
-	update-rc.d remove ${RSZPARTSCRIPT%%".sh"}
+	update-rc.d ${RSZPARTSCRIPT%%".sh"} remove
 fi
 
-for((count=$CNFGSTATE;count<=$CNFGSTATEMX;count++));
+for((count=0;count<=$CNFGSTATEMX;count++));
 do
 	case $count
 	in
@@ -256,56 +266,56 @@ do
 			then
 				hwconfig
 			fi
-			CNFGSTATE=`$EXPRBIN $CNFGSTATE + 1`
-			printf "$CNFGSTATE\n" > $FILE_CNFGSTATE
+			CNFGSTATE=`expr $CNFGSTATE + 1`
+			printf "$CNFGSTATE\n" > $CNFGSTATEFILE
 			;;
 		1)
 			if [ $RSZ_PART -eq "1" ]
 			then
 				rszprtn
 			fi
-			CNFGSTATE=`$EXPRBIN $CNFGSTATE + 1`
-			printf "$CNFGSTATE\n" > $FILE_CNFGSTATE
+			CNFGSTATE=`expr $CNFGSTATE + 1`
+			printf "$CNFGSTATE\n" > $CNFGSTATEFILE
 			;;
 		2)
-			if [ $CONFIG_NW -eq "1" ]
+			if [ $NW_CONFIG -eq "1" ]
 			then
 				confignw
 			fi
-			CNFGSTATE=`$EXPRBIN $CNFGSTATE + 1`
-			printf "$CNFGSTATE\n" > $FILE_CNFGSTATE
+			CNFGSTATE=`expr $CNFGSTATE + 1`
+			printf "$CNFGSTATE\n" > $CNFGSTATEFILE
 			;;
 		3)
 			if [ $ADD_USR -eq "1" ]
 			then
 				addusrpi
 			fi
-			CNFGSTATE=`$EXPRBIN $CNFGSTATE + 1`
-			printf "$CNFGSTATE\n" > $FILE_CNFGSTATE
+			CNFGSTATE=`expr $CNFGSTATE + 1`
+			printf "$CNFGSTATE\n" > $CNFGSTATEFILE
 			;;
 		4)
 			if [ $ADD_USR_SUDO -eq "1" ]
 			then
 				addusrsudo
 			fi
-			CNFGSTATE=`$EXPRBIN $CNFGSTATE + 1`
-			printf "$CNFGSTATE\n" > $FILE_CNFGSTATE
+			CNFGSTATE=`expr $CNFGSTATE + 1`
+			printf "$CNFGSTATE\n" > $CNFGSTATEFILE
 			;;
 		5)
 			if [ $DIS_ROOT -eq "1" ]
 			then
 				disroot
 			fi
-			CNFGSTATE=`$EXPRBIN $CNFGSTATE + 1`
-			printf "$CNFGSTATE\n" > $FILE_CNFGSTATE
+			CNFGSTATE=`expr $CNFGSTATE + 1`
+			printf "$CNFGSTATE\n" > $CNFGSTATEFILE
 			;;
 		6)
 			if [ $PKGS_INSTL -eq "1" ]
 			then
 				pkgsinstl
 			fi
-			CNFGSTATE=`$EXPRBIN $CNFGSTATE + 1`
-			printf "$CNFGSTATE\n" > $FILE_CNFGSTATE
+			CNFGSTATE=`expr $CNFGSTATE + 1`
+			printf "$CNFGSTATE\n" > $CNFGSTATEFILE
 			;;
 		*)
 			printf "main(): Fatal Error! undefined state encountered!\n"
