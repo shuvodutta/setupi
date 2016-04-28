@@ -45,10 +45,13 @@ ROOTPRTNDEV="mmcblk0"
 BLOCKDEV="/dev/"$ROOTPRTNDEV
 
 SYSCNFGDIR="/etc/"
+INITDIR=$SYSCNFGDIR"init.d/"
+INITDFLTDIR=$SYSCNFGDIR"defaults/"
 HOSTFILE="hostname"
 NWFILE="network"
-CNFGDIR="/boot/"
+CNFGDIR="/boot/setupi/"
 CNFGSTATEFILE="setupi.state"
+RSZPARTSCRIPT="rszprtn.sh"
 
 # exit status
 # 0: success
@@ -154,6 +157,7 @@ rszprtn()
 								parted -s $BLOCKDEV rm $PRTNNO
 								PRTNNO=`expr $PRTNNO - 1`
 							else
+								printf "error: partition-resizing: partition 3 is not linux-swap!\n"
 								exitsetup
 							fi
 							;;
@@ -168,22 +172,29 @@ rszprtn()
 						# create new partition 2; rootfs with same star sec. but new end sec.
 						parted -s $BLOCKDEV unit s primary ext4 $STRTSEC $ENDSEC
 					else
+						printf "error: partition-resizing: end sector no. is less than start sector no.!\n"
 						exitsetup
 					fi
 				else
+					printf "error: partition-resizing: first partition is not boot!\n"
 					exitsetup
 				fi
 			else
+				printf "error: partition-resizing: no. of partitions is more than 3!\n"
 				exitsetup
 			fi
 		else
+			printf "error: partition-resizing: rootfs is not on partition 2!\n"
 			exitsetup
 		fi
 	else
+		printf "error: partition-resizing: it's not a sd/msd card!\n"
 		exitsetup
 	fi
 	# schedule a run for 'resize2fs' & 'fsck' on next boot through init script(s).
-	:
+	cp $CNFGDIR$RSZPARTSCRIPT $INITDIR$RSZPARTSCRIPT
+	chmod +x $INITDIR$RSZPARTSCRIPT
+	update-rc.d $INITDIR$RSZPARTSCRIPT defaults
 }
 
 confignw()
@@ -230,6 +241,11 @@ local count="0"
 chkprvlg
 chkdist
 readconfigstate
+
+if [ -f $INITDIR$RSZPARTSCRIPT ] || [ : ]
+then
+	update-rc.d remove ${RSZPARTSCRIPT%%".sh"}
+fi
 
 for((count=$CNFGSTATE;count<=$CNFGSTATEMX;count++));
 do
