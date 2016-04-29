@@ -12,7 +12,7 @@
 # +I tried to use GNU 'coreutils' as much as possible.
 
 VERSION="0.1"
-DATE="27-04-2016"
+DATE="29-04-2016"
 
 # Configuration Block
 HW_CONFIG="0"
@@ -116,17 +116,12 @@ rszprtn()
 	# +& size is up to the end of the card. we'll use 'parted' for this.
 	# assumed partition layout: boot(1), rootfs(2), swap(3) or boot(1), rootfs(2)
 	
-	# we need to check if it's sd/msd card or not; if it's not then
+	# we need to check rootfs is mounted on sd/msd card or not; if it's not then
 	# +it's better not to proceed further.
 	# (ref. raspi-config @ https://github.com/asb/raspi-config)
-	if [ -L $ROOTPARTN ]
-	then
-		# raspbian; /dev/root->/dev/mmcblk0p02
-		DEVTYPE=`readlink $ROOTPARTN | rev | cut -d'/' -f1 | rev`
-	else
-		# minibian; /dev/mmcblk0p02
-		DEVTYPE=`mount | grep -i 'mmc' | sort | cut -d' ' -f1 | tail -n 1 | rev | cut -d/ -f1 | rev`
-	fi
+	
+	# latest kernel does not create '/dev/root' symlink anymore; this is not dependent on symlink (raspi-config depends on this symlink!)
+	DEVTYPE=`mount | grep -iw '/' | cut -d' ' -f1 | rev | cut -d/ -f1 | rev`
 	if [ "${DEVTYPE##$ROOTPRTNDEV}" != "$DEVTYPE" ]
 	then
 		# we need to verify assumed partition layout first. we'll proceed if
@@ -142,9 +137,9 @@ rszprtn()
 			then
 				# 2. check whether first partition is with 'boot' flag or not
 				FLAG=`parted -s $BLOCKDEV unit s print -m | head -n 3 | tail -n 1 | cut -d: -f7 | cut -d';' -f1`
-				# temp. hack
-				FLAG="boot"
-				if [ "$FLAG" == "boot" ]
+				FSTYPE=`parted -s $BLOCKDEV unit s print -m | head -n 3 | tail -n 1 | cut -d: -f5`
+				# 'boot' flag might not be set in some cases; boot partition is the only fat16 partition
+				if [ "$FLAG" == "boot" ] || [ "$FSTYPE" == "fat16" ]
 				then
 					case $PRTNNO
 					in
@@ -198,7 +193,7 @@ rszprtn()
 			exitsetup
 		fi
 	else
-		printf "error: partition-resizing: it's not a sd/msd card!\n"
+		printf "error: partition-resizing: rootfs is not on sd/msd card!\n"
 		exitsetup
 	fi
 	# schedule a run for 'resize2fs' & 'fsck' on next boot through init script(s).
